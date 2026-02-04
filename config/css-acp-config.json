@@ -1,0 +1,17 @@
+{
+  "@context": "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^7.0.0/config/context.jsonld",
+  "import": [
+    "node_modules/@solid/community-server/config/ldp/production.json",
+    "node_modules/@solid/community-server/config/identity/oidc.json"
+  ],
+  "oidc": {
+    "staticClients": [
+      {
+        "clientId": "urn:solid:healthcare-app",
+        "redirectUris": ["http://localhost:5173/"],
+        "postLogoutRedirectUris": ["http://localhost:5173/"],
+        "requirePkce": true
+      }
+    ]
+  }
+}
