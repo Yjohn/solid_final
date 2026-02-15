@@ -52,11 +52,21 @@ function buildAcrTurtle(opts: AccessOptions): string {
     nurseCanReadWrite,
     restrictToClientAndIssuer = true,
   } = opts;
-
+const accessControls: string[] = ["<#ownerAccess>"];
+  if (doctorCanReadWrite) accessControls.push("<#doctorAccess>");
+  if (emergencyCanRead) accessControls.push("<#emergencyAccess>");
+  if (pharmacyCanRead) accessControls.push("<#pharmacyAccess>");
+  if (nurseCanReadWrite) accessControls.push("<#nurseAccess>");
   return `
 @prefix acp: <http://www.w3.org/ns/solid/acp#>.
 @prefix acl: <http://www.w3.org/ns/auth/acl#>.
 
+<#root>
+  a acp:AccessControlResource;
+  acp:resource <${resourceUrl}>;
+  acp:accessControl ${accessControls.join(", ")};
+  acp:memberAccessControl ${accessControls.join(", ")} .
+  
 <#healthContainerACR>
   a acp:AccessControlResource;
   acp:resource <${resourceUrl}>;
