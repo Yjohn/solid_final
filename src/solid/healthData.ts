@@ -43,6 +43,7 @@ export function emptyFullRecord(): FullRecord {
 export async function loadFullRecord(
   fetchFn: typeof fetch,
   podBaseUrl: string,
+  autoCreateOn404: boolean = true,
 ): Promise<{ data: FullRecord | null; status: number }> {
   const url = `${podBaseUrl}health/full-record.json`;
   const res = await fetchFn(url, {
@@ -50,11 +51,25 @@ export async function loadFullRecord(
     cache: "no-store",
   });
 
+  //   if (res.status === 404) {
+  //     const emptyRecord = emptyFullRecord();
+  //     await saveFullRecord(fetchFn, podBaseUrl, emptyRecord);
+  //     return { data: emptyRecord, status: 200 };
+  //   }
+  //   if (res.status === 403) return { data: null, status: 403 };
+  //   if (!res.ok) throw new Error(res.statusText);
+
+  //   return { data: await res.json(), status: res.status };
+  // }
+  // Do NOT auto-create for doctors/emergency etc
   if (res.status === 404) {
+    if (!autoCreateOn404) return { data: null, status: 404 };
+
     const emptyRecord = emptyFullRecord();
     await saveFullRecord(fetchFn, podBaseUrl, emptyRecord);
     return { data: emptyRecord, status: 200 };
   }
+
   if (res.status === 403) return { data: null, status: 403 };
   if (!res.ok) throw new Error(res.statusText);
 
