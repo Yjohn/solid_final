@@ -18,6 +18,9 @@ export const PHARMACY_WEBID = "http://localhost:3000/pharmacy/profile/card#me";
 
 export const NURSE_WEBID = "http://localhost:3000/nurse/profile/card#me";
 
+export const GOVERNANCE_POD_BASE = "http://localhost:3000/governance/";
+export const GOVERNANCE_WEBID = "http://localhost:3000/governance/profile/card#me";
+
 export const PATIENTS = {
   patient1: {
     label: "Patient 1",
