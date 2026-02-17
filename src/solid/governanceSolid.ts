@@ -534,71 +534,45 @@ export async function acknowledgeGrant(
 async function listContainerMembers(fetchFn: AuthenticatedFetch, containerUrl: string): Promise<string[]> {
   const res = await fetchFn(containerUrl, {
     method: "GET",
-    headers: {
-      Accept: "text/turtle, application/ld+json;q=0.9",
-      "Cache-Control": "no-store",
-    },
+    headers: { Accept: "text/turtle", "Cache-Control": "no-store" },
     cache: "no-store",
   });
-
   if (res.status === 404) return [];
   if (!res.ok) {
     const t = await res.text().catch(() => "");
     throw new Error(`Failed to list container ${containerUrl}: ${res.status}\n${t}`);
   }
 
-  const ct = (res.headers.get("content-type") || "").toLowerCase();
   const body = await res.text();
-
-  // JSON-LD path
-  if (ct.includes("application/ld+json")) {
-    try {
-      const json = JSON.parse(body);
-      const nodes = Array.isArray(json) ? json : [json];
-      const containsKey = "http://www.w3.org/ns/ldp#contains";
-
-      const out: string[] = [];
-      for (const n of nodes) {
-        const contains = n[containsKey];
-        if (!contains) continue;
-
-        const arr = Array.isArray(contains) ? contains : [contains];
-        for (const x of arr) {
-          const id = x?.["@id"];
-          if (id) out.push(new URL(id, containerUrl).toString());
-        }
-      }
-      return Array.from(new Set(out));
-    } catch {
-      // fall through to Turtle parsing
-    }
-  }
-
-  // Turtle path: handle both "ldp:contains" and "<http://www.w3.org/ns/ldp#contains>"
   const urls = new Set<string>();
 
-  // Find complete statements for contains, then extract all IRIs in that statement.
-  const stmtRe =
-    /(?:\bldp:contains\b|<http:\/\/www\.w3\.org\/ns\/ldp#contains>)\s+([^.]*)\./gms;
+  // CSS puts ldp:contains on a single line with comma-separated relative IRIs:
+  // <> posix:mtime 123; ldp:contains <a.json>, <b.json>, <c.json>.
+  // We find the ldp:contains line, then extract all <...> IRIs from it.
+  const lines = body.split("\n");
+  let inContains = false;
 
-  let stmtMatch: RegExpExecArray | null;
-  while ((stmtMatch = stmtRe.exec(body))) {
-    const objects = stmtMatch[1];
+  for (const line of lines) {
+    const isContainsLine = inContains || line.includes("ldp:contains");
+    if (!isContainsLine) continue;
+
+    inContains = true;
+
+    // Extract all relative IRIs on this line
     const iriRe = /<([^>]+)>/g;
-    let iriMatch: RegExpExecArray | null;
-    while ((iriMatch = iriRe.exec(objects))) {
-      const raw = iriMatch[1];
-      urls.add(new URL(raw, containerUrl).toString());
+    let m: RegExpExecArray | null;
+    while ((m = iriRe.exec(line))) {
+      const raw = m[1];
+      // Skip the self-referential <> and absolute URIs that aren't members
+      if (raw && !raw.startsWith("http") && raw !== "") {
+        urls.add(new URL(raw, containerUrl).toString());
+      }
     }
-  }
 
-  // Extra safety: also catch single-object patterns
-  const singleRe =
-    /(?:\bldp:contains\b|<http:\/\/www\.w3\.org\/ns\/ldp#contains>)\s*<([^>]+)>/g;
-
-  let m: RegExpExecArray | null;
-  while ((m = singleRe.exec(body))) {
-    urls.add(new URL(m[1], containerUrl).toString());
+    // The statement ends with a period (possibly after the last IRI)
+    if (line.trimEnd().endsWith(".")) {
+      inContains = false;
+    }
   }
 
   return Array.from(urls);
