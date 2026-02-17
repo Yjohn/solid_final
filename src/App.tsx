@@ -357,7 +357,7 @@ const App: React.FC = () => {
 
         setFullRecord(null);
         setFullRecordStatus(null);
-        setFullRecordError("Error loading full record: " + msg);
+        setFullRecordError("Record not loaded!");
       }
     })();
 
@@ -382,8 +382,7 @@ const App: React.FC = () => {
         setFilesLoading(false);
       } catch (err: any) {
         if (cancelled) return;
-        const msg = String(err?.message || "");
-        setFilesError("Error loading patient files: " + msg);
+        setFilesError("Patient files not loaded!");
         setFilesLoading(false);
       }
     })();
@@ -398,7 +397,7 @@ const App: React.FC = () => {
         })
         .catch((err) => {
           if (cancelled) return;
-          console.error("Error reading ACP:", err);
+          // console.error("Error reading ACP:", err);
         });
     }
 
@@ -971,7 +970,7 @@ const App: React.FC = () => {
                   <th className="text-left px-3 py-2">Time</th>
                   <th className="text-left px-3 py-2">Type</th>
                   <th className="text-left px-3 py-2">Actor</th>
-                  <th className="text-left px-3 py-2">Patient</th>
+                  <th className="text-left px-3 py-2">Recipient</th>
                   <th className="text-left px-3 py-2">Scope</th>
                   <th className="text-left px-3 py-2">Hash</th>
                 </tr>
@@ -982,7 +981,7 @@ const App: React.FC = () => {
                     <td className="px-3 py-2 whitespace-nowrap">{fmtTime(ev.at)}</td>
                     <td className="px-3 py-2 font-semibold">{ev.type}</td>
                     <td className="px-3 py-2">{shortId(ev.actorWebId)}</td>
-                    <td className="px-3 py-2">{shortId(ev.patientWebId)}</td>
+                    <td className="px-3 py-2">{shortId(ev.doctorWebId)}</td>
                     <td className="px-3 py-2 max-w-md truncate" title={ev.scopeUrl}>
                       {ev.scopeUrl}
                     </td>
