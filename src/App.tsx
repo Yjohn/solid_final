@@ -395,7 +395,7 @@ const App: React.FC = () => {
           setDoctorCanReadWrite(docAccess);
           setEmergencyCanRead(emgAccess);
         })
-        .catch((err) => {
+        .catch(() => {
           if (cancelled) return;
           // console.error("Error reading ACP:", err);
         });
