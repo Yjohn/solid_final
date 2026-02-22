@@ -1,6 +1,7 @@
+// src/components/PatientFileManager.tsx
 import React from "react";
 import type { PatientFile } from "../solid/healthData";
-import type { Role } from "../App";
+import type { Role } from "../app/hooks/usePatientContext";
 
 interface PatientFileManagerProps {
   files: PatientFile[];
@@ -107,10 +108,12 @@ const PatientFileManager: React.FC<PatientFileManagerProps> = ({
               <span className="text-2xl">{getFileIcon(file.type)}</span>
               <div>
                 <h3 className="font-semibold text-gray-800">{file.title}</h3>
+
                 <div className="flex flex-wrap gap-2 mt-1">
                   <span className="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">
                     {file.type}
                   </span>
+
                   {file.sharedWithDoctor && (
                     <span className="inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded">
                       Shared with Doctor
@@ -132,7 +135,9 @@ const PatientFileManager: React.FC<PatientFileManagerProps> = ({
                     </span>
                   )}
                 </div>
+
                 <p className="text-gray-600 text-sm mt-2">{file.description}</p>
+
                 <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
                   <span>Created: {formatDate(file.createdAt)}</span>
                   {file.updatedAt !== file.createdAt && (
@@ -142,6 +147,7 @@ const PatientFileManager: React.FC<PatientFileManagerProps> = ({
                 </div>
               </div>
             </div>
+
             {canEdit && (
               <div className="flex gap-2">
                 <button
@@ -149,12 +155,7 @@ const PatientFileManager: React.FC<PatientFileManagerProps> = ({
                   className="text-blue-600 hover:text-blue-800 p-2"
                   title="Edit file"
                 >
-                  <svg
-                    className="w-5 h-5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -163,17 +164,13 @@ const PatientFileManager: React.FC<PatientFileManagerProps> = ({
                     />
                   </svg>
                 </button>
+
                 <button
                   onClick={() => onDelete(file.id)}
                   className="text-red-600 hover:text-red-800 p-2"
                   title="Delete file"
                 >
-                  <svg
-                    className="w-5 h-5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -185,14 +182,11 @@ const PatientFileManager: React.FC<PatientFileManagerProps> = ({
               </div>
             )}
           </div>
+
           {file.content && (
             <div className="mt-3 p-3 bg-gray-50 rounded-lg">
-              <h4 className="font-medium text-gray-700 text-sm mb-2">
-                Content:
-              </h4>
-              <pre className="text-gray-600 text-sm whitespace-pre-wrap">
-                {file.content}
-              </pre>
+              <h4 className="font-medium text-gray-700 text-sm mb-2">Content:</h4>
+              <pre className="text-gray-600 text-sm whitespace-pre-wrap">{file.content}</pre>
             </div>
           )}
         </div>
