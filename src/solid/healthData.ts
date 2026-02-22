@@ -1,5 +1,4 @@
 // src/solid/healthData.ts
-export type PatientKey = "patient1" | "patient2";
 
 export type FullRecord = {
   patientName: string;
@@ -51,17 +50,6 @@ export async function loadFullRecord(
     cache: "no-store",
   });
 
-  //   if (res.status === 404) {
-  //     const emptyRecord = emptyFullRecord();
-  //     await saveFullRecord(fetchFn, podBaseUrl, emptyRecord);
-  //     return { data: emptyRecord, status: 200 };
-  //   }
-  //   if (res.status === 403) return { data: null, status: 403 };
-  //   if (!res.ok) throw new Error(res.statusText);
-
-  //   return { data: await res.json(), status: res.status };
-  // }
-  // Do NOT auto-create for doctors/emergency etc
   if (res.status === 404) {
     if (!autoCreateOn404) return { data: null, status: 404 };
 
@@ -73,7 +61,7 @@ export async function loadFullRecord(
   if (res.status === 403) return { data: null, status: 403 };
   if (!res.ok) throw new Error(res.statusText);
 
-  return { data: await res.json(), status: res.status };
+  return { data: (await res.json()) as FullRecord, status: res.status };
 }
 
 export async function saveFullRecord(
@@ -95,10 +83,12 @@ export async function loadPatientFiles(
   podBaseUrl: string,
 ): Promise<PatientFile[]> {
   const url = `${podBaseUrl}health/files.json`;
-  const res = await fetchFn(url);
+  const res = await fetchFn(url, { cache: "no-store" });
+
   if (res.status === 404) return [];
   if (!res.ok) throw new Error(res.statusText);
-  return res.json();
+
+  return (await res.json()) as PatientFile[];
 }
 
 export async function savePatientFile(
@@ -109,9 +99,14 @@ export async function savePatientFile(
   const files = await loadPatientFiles(fetchFn, podBaseUrl);
   const now = new Date().toISOString();
 
+  const id =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
   files.push({
     ...file,
-    id: crypto.randomUUID(),
+    id,
     createdAt: now,
     updatedAt: now,
   });

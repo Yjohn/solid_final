@@ -1,8 +1,8 @@
+// src/solid/session.ts
 import {
   getDefaultSession,
   handleIncomingRedirect,
   login as solidLogin,
-  logout as solidLogout,
 } from "@inrupt/solid-client-authn-browser";
 import { SOLID_ISSUER, CLIENT_ID, REDIRECT_URL, POST_LOGOUT_URL } from "./config";
 

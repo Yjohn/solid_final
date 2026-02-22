@@ -1,3 +1,4 @@
+// src/solid/acp.ts
 import type { AuthenticatedFetch } from "./session";
 import { SOLID_ISSUER, CLIENT_ID } from "./config";
 
@@ -52,11 +53,13 @@ function buildAcrTurtle(opts: AccessOptions): string {
     nurseCanReadWrite,
     restrictToClientAndIssuer = true,
   } = opts;
-const accessControls: string[] = ["<#ownerAccess>"];
-  if (doctorCanReadWrite) accessControls.push("<#doctorAccess>");
-  if (emergencyCanRead) accessControls.push("<#emergencyAccess>");
-  if (pharmacyCanRead) accessControls.push("<#pharmacyAccess>");
-  if (nurseCanReadWrite) accessControls.push("<#nurseAccess>");
+
+  const accessControls: string[] = ["<#ownerAccessControl>"];
+  if (doctorCanReadWrite) accessControls.push("<#doctorAccessControl>");
+  if (emergencyCanRead) accessControls.push("<#emergencyAccessControl>");
+  if (pharmacyCanRead) accessControls.push("<#pharmacyAccessControl>");
+  if (nurseCanReadWrite) accessControls.push("<#nurseAccessControl>");
+
   return `
 @prefix acp: <http://www.w3.org/ns/solid/acp#>.
 @prefix acl: <http://www.w3.org/ns/auth/acl#>.
@@ -66,21 +69,16 @@ const accessControls: string[] = ["<#ownerAccess>"];
   acp:resource <${resourceUrl}>;
   acp:accessControl ${accessControls.join(", ")};
   acp:memberAccessControl ${accessControls.join(", ")} .
-  
-<#healthContainerACR>
-  a acp:AccessControlResource;
-  acp:resource <${resourceUrl}>;
-  acp:accessControl <#ownerAccessControl>${doctorCanReadWrite ? ", <#doctorAccessControl>" : ""}${emergencyCanRead ? ", <#emergencyAccessControl>" : ""}${pharmacyCanRead ? ", <#pharmacyAccessControl>" : ""}${nurseCanReadWrite ? ", <#nurseAccessControl>" : ""} .
 
 <#filesJsonACR>
   a acp:AccessControlResource;
   acp:resource <${resourceUrl}files.json>;
-  acp:accessControl <#ownerAccessControl>${doctorCanReadWrite ? ", <#doctorAccessControl>" : ""}${emergencyCanRead ? ", <#emergencyAccessControl>" : ""}${pharmacyCanRead ? ", <#pharmacyAccessControl>" : ""}${nurseCanReadWrite ? ", <#nurseAccessControl>" : ""} .
+  acp:accessControl ${accessControls.join(", ")} .
 
 <#fullRecordJsonACR>
   a acp:AccessControlResource;
   acp:resource <${resourceUrl}full-record.json>;
-  acp:accessControl <#ownerAccessControl>${doctorCanReadWrite ? ", <#doctorAccessControl>" : ""}${emergencyCanRead ? ", <#emergencyAccessControl>" : ""}${pharmacyCanRead ? ", <#pharmacyAccessControl>" : ""}${nurseCanReadWrite ? ", <#nurseAccessControl>" : ""} .
+  acp:accessControl ${accessControls.join(", ")} .
 
 <#ownerAccessControl>
   a acp:AccessControl;
@@ -154,7 +152,7 @@ function acrUrlForResource(resourceUrl: string): string {
 
 export async function applyAcpForResource(
   fetchFn: AuthenticatedFetch,
-  options: AccessOptions
+  options: AccessOptions,
 ): Promise<void> {
   const acrUrl = acrUrlForResource(options.resourceUrl);
   const turtle = buildAcrTurtle(options);
@@ -173,30 +171,33 @@ export async function applyAcpForResource(
 
 export const applyAccessForFullRecord = applyAcpForResource;
 
+/**
+ * Read ACP “intent” by inspecting the ACR Turtle for policy blocks.
+ * This fixes the previous approach that probed access with the patient’s own fetch (always succeeds).
+ */
 export async function readAccessForFullRecord(
   fetchFn: AuthenticatedFetch,
-  resourceUrl: string,
+  resourceUrl: string, // health/ container URL
 ): Promise<{ doctorCanReadWrite: boolean; emergencyCanRead: boolean }> {
+  const acrUrl = acrUrlForResource(resourceUrl);
+  const res = await fetchFn(acrUrl, {
+    method: "GET",
+    headers: { Accept: "text/turtle" },
+    cache: "no-store",
+  });
 
-  const fullRecordUrl = `${resourceUrl}full-record.json`;
-
-  const checkAccess = async (method: "GET" | "PUT") => {
-    const res = await fetchFn(fullRecordUrl, { method });
-    return res.status !== 403;
-  };
-
-  let doctorCanReadWrite = false;
-  let emergencyCanRead = false;
-
-  try {
-    doctorCanReadWrite =
-      (await checkAccess("GET")) && (await checkAccess("PUT"));
-
-    emergencyCanRead = await checkAccess("GET");
-
-  } catch (e) {
-    console.error("Access probe failed:", e);
+  if (res.status === 404) {
+    return { doctorCanReadWrite: false, emergencyCanRead: false };
   }
+
+  if (!res.ok) {
+    // If ACR can't be read, default to false (don’t auto-check toggles on)
+    return { doctorCanReadWrite: false, emergencyCanRead: false };
+  }
+
+  const ttl = await res.text();
+  const doctorCanReadWrite = ttl.includes("<#doctorAccessControl>");
+  const emergencyCanRead = ttl.includes("<#emergencyAccessControl>");
 
   return { doctorCanReadWrite, emergencyCanRead };
 }
