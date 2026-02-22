@@ -1,15 +1,8 @@
 // src/App.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import type { FullRecord, PatientFile } from "./solid/healthData";
 
-import {
-  initSessionFromRedirect,
-  isLoggedIn,
-  login,
-  logout,
-  getWebId,
-  session,
-} from "./solid/session";
+import { session } from "./solid/session";
 
 import {
   PATIENTS,
@@ -17,7 +10,6 @@ import {
   EMERGENCY_WEBID,
   PHARMACY_WEBID,
   NURSE_WEBID,
-  GOVERNANCE_WEBID,
 } from "./solid/config";
 
 import {
@@ -28,472 +20,243 @@ import {
   deletePatientFile,
 } from "./solid/healthData";
 
-import { applyAccessForFullRecord, readAccessForFullRecord } from "./solid/acp";
+import { applyAccessForFullRecord } from "./solid/acp";
 
-import {
-  bootstrapGovernanceStore,
-  createGrantAndActivate,
-  revokeActiveGrant,
-  getActiveGrantState,
-  hasDoctorAcknowledged,
-  acknowledgeGrant,
-  listAuditEvents,
-} from "./solid/governanceSolid";
-
-import type { AuditEvent, GrantState } from "./solid/governanceSolid";
+import { bootstrapGovernanceStore, createGrantAndActivate, revokeActiveGrant } from "./solid/governanceSolid";
 
 import PatientFileManager from "./components/PatientFileManager";
 import FileUploadForm from "./components/FileUploadForm";
 
-export type Role =
-  | "patient"
-  | "doctor"
-  | "emergency"
-  | "pharmacy"
-  | "nurse"
-  | "governance"
-  | "unknown";
+import { useSolidSession } from "./app/hooks/useSolidSession";
+import { usePatientContext, type Role, type PatientKey } from "./app/hooks/usePatientContext";
+import { useDoctorGate } from "./app/hooks/useDoctorGate";
+import { useGovernanceAudit } from "./app/hooks/useGovernanceAudit";
+import { usePatientData } from "./app/hooks/usePatientData";
+import { useDoctorRevocationPolling } from "./app/hooks/useDoctorRevocationPolling";
+import { fmtTime, shortId } from "./app/utils";
 
-type PatientKey = keyof typeof PATIENTS;
+type FullRecordFormProps = {
+  role: Role;
+  fullRecord: FullRecord;
+  onChange: (value: FullRecord) => void;
+  onSave?: () => void;
+};
 
-type LoadFullRecordResult = { data: FullRecord | null; status: number };
+const FullRecordForm: React.FC<FullRecordFormProps> = ({
+  role,
+  fullRecord,
+  onChange,
+  onSave,
+}) => {
+  const readOnly =
+    role === "emergency" ||
+    role === "pharmacy" ||
+    role === "nurse" ||
+    role === "governance" ||
+    role === "unknown";
 
-// Safe full-record load:
-// - Never auto-creates record unless allowCreateIfMissing=true (patient only)
-async function safeLoadFullRecord(
-  fetchFn: typeof fetch,
-  podBaseUrl: string,
-  allowCreateIfMissing: boolean,
-): Promise<LoadFullRecordResult> {
-  const url = `${podBaseUrl}health/full-record.json`;
-
-  const res = await fetchFn(url, {
-    method: "GET",
-    headers: { Accept: "application/json" },
-    cache: "no-store",
-  });
-
-  if (res.status === 403) return { data: null, status: 403 };
-
-  if (res.status === 404) {
-    if (!allowCreateIfMissing) return { data: null, status: 404 };
-    const empty = emptyFullRecord();
-    await saveFullRecord(fetchFn, podBaseUrl, empty);
-    return { data: empty, status: 200 };
+  function updateField(field: keyof FullRecord, value: string) {
+    onChange({ ...fullRecord, [field]: value });
   }
 
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-6 mb-6">
+      <h2 className="text-xl font-bold text-gray-800 mb-6">Full medical record</h2>
 
-  return { data: (await res.json()) as FullRecord, status: res.status };
-}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+        <label className="block">
+          <span className="block text-sm font-medium text-gray-700 mb-1">Patient name</span>
+          <input
+            type="text"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
+            value={fullRecord.patientName}
+            disabled={readOnly}
+            onChange={(e) => updateField("patientName", e.target.value)}
+          />
+        </label>
 
-function shortId(w?: string) {
-  if (!w) return "";
-  return w.replace("http://localhost:3000/", "").replace("/profile/card#me", "");
-}
+        <label className="block">
+          <span className="block text-sm font-medium text-gray-700 mb-1">Date of birth</span>
+          <input
+            type="date"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
+            value={fullRecord.dateOfBirth}
+            disabled={readOnly}
+            onChange={(e) => updateField("dateOfBirth", e.target.value)}
+          />
+        </label>
 
-function fmtTime(iso: string) {
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? iso : d.toLocaleString();
-}
+        <label className="block">
+          <span className="block text-sm font-medium text-gray-700 mb-1">Blood type</span>
+          <input
+            type="text"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
+            value={fullRecord.bloodType}
+            disabled={readOnly}
+            onChange={(e) => updateField("bloodType", e.target.value)}
+          />
+        </label>
+
+        <label className="block">
+          <span className="block text-sm font-medium text-gray-700 mb-1">Address</span>
+          <input
+            type="text"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
+            value={fullRecord.address}
+            disabled={readOnly}
+            onChange={(e) => updateField("address", e.target.value)}
+          />
+        </label>
+
+        <label className="block md:col-span-2">
+          <span className="block text-sm font-medium text-gray-700 mb-1">Allergies</span>
+          <textarea
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 h-32 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
+            value={fullRecord.allergies}
+            disabled={readOnly}
+            onChange={(e) => updateField("allergies", e.target.value)}
+          />
+        </label>
+
+        <label className="block md:col-span-2">
+          <span className="block text-sm font-medium text-gray-700 mb-1">Diagnoses</span>
+          <textarea
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 h-32 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
+            value={fullRecord.diagnoses}
+            disabled={readOnly}
+            onChange={(e) => updateField("diagnoses", e.target.value)}
+          />
+        </label>
+
+        <label className="block md:col-span-2">
+          <span className="block text-sm font-medium text-gray-700 mb-1">Medications</span>
+          <textarea
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 h-32 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
+            value={fullRecord.medications}
+            disabled={readOnly}
+            onChange={(e) => updateField("medications", e.target.value)}
+          />
+        </label>
+
+        <label className="block md:col-span-2">
+          <span className="block text-sm font-medium text-gray-700 mb-1">Notes</span>
+          <textarea
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 h-32 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
+            value={fullRecord.notes}
+            disabled={readOnly}
+            onChange={(e) => updateField("notes", e.target.value)}
+          />
+        </label>
+      </div>
+
+      {onSave && !readOnly && (
+        <button
+          className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200"
+          onClick={onSave}
+        >
+          Save record to pod
+        </button>
+      )}
+
+      {readOnly && (
+        <p className="text-gray-500 text-sm italic mt-4">
+          You are viewing this record read only. Only patients and doctors can edit.
+        </p>
+      )}
+    </div>
+  );
+};
 
 const App: React.FC = () => {
-  const [ready, setReady] = useState(false);
-  const [loggedIn, setLoggedIn] = useState(false);
-  const [webId, setWebId] = useState<string | undefined>(undefined);
-  const [role, setRole] = useState<Role>("unknown");
-
-  const [selectedPatient, setSelectedPatient] =
-    useState<PatientKey>("patient1");
-
-  // Full record UI state
-  const [fullRecord, setFullRecord] = useState<FullRecord | null>(null);
-  const [fullRecordStatus, setFullRecordStatus] = useState<number | null>(null);
-  const [fullRecordError, setFullRecordError] = useState<string | null>(null);
-
-  // Files UI state
-  const [patientFiles, setPatientFiles] = useState<PatientFile[]>([]);
-  const [filesLoading, setFilesLoading] = useState(false);
-  const [filesError, setFilesError] = useState<string | null>(null);
-
-  // File editor UI
-  const [showFileUpload, setShowFileUpload] = useState(false);
-  const [editingFile, setEditingFile] = useState<PatientFile | null>(null);
-
-  // ACP toggles (patient controls these)
-  const [doctorCanReadWrite, setDoctorCanReadWrite] = useState(false);
-  const [emergencyCanRead, setEmergencyCanRead] = useState(false);
-
-  // Legal notice gating for doctor
-  const [showLegalNotice, setShowLegalNotice] = useState(false);
-  const [legalNoticeText, setLegalNoticeText] = useState("");
-  const [pendingGrant, setPendingGrant] = useState<GrantState | null>(null);
-  const [noticeAcceptedTick, setNoticeAcceptedTick] = useState(0);
-
-  // Governance audit dashboard state
-  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
-  const [auditLoading, setAuditLoading] = useState(false);
-  const [auditError, setAuditError] = useState<string | null>(null);
+  // -------------------------
+  // Session + context
+  // -------------------------
+  const { ready, loggedIn, webId, login, logout } = useSolidSession();
+  const {
+    role,
+    selectedPatient,
+    setSelectedPatient,
+    effectivePatientKey,
+    effectivePatient,
+    patientHealthContainerUrl,
+    isGovernance,
+  } = usePatientContext(loggedIn, webId);
 
   // -------------------------
-  // Session init
+  // Doctor gate + audit
   // -------------------------
-  useEffect(() => {
-    (async () => {
-      await initSessionFromRedirect();
-      const logged = isLoggedIn();
-      const id = getWebId();
-      setLoggedIn(logged);
-      setWebId(id);
-      setRole(detectRole(id));
-      setReady(true);
-    })();
-  }, []);
+  const doctorGate = useDoctorGate();
+  const audit = useGovernanceAudit(isGovernance);
 
   // -------------------------
-  // Role detection
+  // Patient data (record/files/toggles)
   // -------------------------
-  function detectRole(id?: string): Role {
-    if (!id) return "unknown";
-    if (id === GOVERNANCE_WEBID) return "governance";
-
-    const patientKeys = Object.keys(PATIENTS) as PatientKey[];
-    if (patientKeys.some((key) => PATIENTS[key].webId === id)) return "patient";
-
-    if (id === DOCTOR_WEBID) return "doctor";
-    if (id === EMERGENCY_WEBID) return "emergency";
-    if (id === PHARMACY_WEBID) return "pharmacy";
-    if (id === NURSE_WEBID) return "nurse";
-
-    return "unknown";
-  }
-
-  function getEffectivePatientKey(
-    r: Role,
-    id: string | undefined,
-    selected: PatientKey,
-  ): PatientKey | null {
-    if (r === "patient") {
-      if (!id) return null;
-      const keys = Object.keys(PATIENTS) as PatientKey[];
-      const mine = keys.find((key) => PATIENTS[key].webId === id);
-      return mine ?? null;
-    }
-
-    // Governance should not resolve a patient at all, because it should never load patient data
-    if (r === "governance") return null;
-
-    return selected;
-  }
-
-  const effectivePatientKey = useMemo(() => {
-    if (!loggedIn) return null;
-    return getEffectivePatientKey(role, webId, selectedPatient);
-  }, [loggedIn, role, webId, selectedPatient]);
-
-  const effectivePatient = useMemo(() => {
-    if (!effectivePatientKey) return null;
-    return PATIENTS[effectivePatientKey];
-  }, [effectivePatientKey]);
-
-  const patientHealthContainerUrl = useMemo(() => {
-    if (!effectivePatient) return null;
-    return new URL("health/", effectivePatient.podBaseUrl).toString(); // ends with /
-  }, [effectivePatient]);
-
-  const isGovernance = loggedIn && role === "governance";
-
-  // -------------------------
-  // Governance: refresh audit events (only for governance)
-  // -------------------------
-  async function refreshAudit() {
-    try {
-      setAuditLoading(true);
-      setAuditError(null);
-      const events = await listAuditEvents(session.fetch, { limit: 300 });
-      setAuditEvents(events);
-    } catch (e: any) {
-      setAuditError(e?.message || String(e));
-    } finally {
-      setAuditLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!isGovernance) return;
-    refreshAudit();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isGovernance]);
-
-  // -------------------------
-  // Doctor gate: must accept notice each time access is granted
-  // -------------------------
-  async function doctorGateOrThrow(patientWebId: string, scopeUrl: string) {
-    const st = await getActiveGrantState(session.fetch, {
-      patientWebId,
-      doctorWebId: DOCTOR_WEBID,
-      scopeUrl,
-    });
-
-    if (!st || st.status !== "active" || !st.activeGrantUrl) {
-      throw new Error("No active grant. Access not granted or revoked.");
-    }
-
-    const ok = await hasDoctorAcknowledged(
-      session.fetch,
-      st.activeGrantUrl,
-      DOCTOR_WEBID,
-    );
-    if (ok) return;
-
-    const termsRes = await session.fetch(st.termsUrl, { cache: "no-store" });
-    const termsText = termsRes.ok
-      ? await termsRes.text()
-      : "Terms could not be loaded.";
-
-    setPendingGrant(st);
-    setLegalNoticeText(termsText);
-    setShowLegalNotice(true);
-
-    throw new Error("Legal notice acknowledgement required.");
-  }
-
-  async function handleAcceptLegalNotice() {
-    try {
-      if (!pendingGrant?.activeGrantUrl) return;
-
-      await acknowledgeGrant(session.fetch, {
-        grantUrl: pendingGrant.activeGrantUrl,
-        doctorWebId: DOCTOR_WEBID,
-        patientWebId: pendingGrant.patientWebId,
-        scopeUrl: pendingGrant.scopeUrl,
-        termsVersion: pendingGrant.termsVersion,
-        termsHash: pendingGrant.termsHash,
-      });
-
-      setShowLegalNotice(false);
-      setPendingGrant(null);
-
-      // trigger reload
-      setNoticeAcceptedTick((n) => n + 1);
-    } catch (e: any) {
-      alert("Failed to acknowledge notice: " + (e?.message || String(e)));
-    }
-  }
-
-  // -------------------------
-  // Load patient data (full record + files)
-  // This effect must NEVER run for governance.
-  // -------------------------
-  useEffect(() => {
-    // Hard stop for governance: no patient fetches at all
-    if (role === "governance") {
-      setFullRecord(null);
-      setFullRecordStatus(null);
-      setFullRecordError(null);
-      setPatientFiles([]);
-      setFilesLoading(false);
-      setFilesError(null);
-      return;
-    }
-
-    // Reset UI state when context changes
-    setFullRecord(null);
-    setFullRecordStatus(null);
-    setFullRecordError(null);
-
-    setPatientFiles([]);
-    setFilesLoading(false);
-    setFilesError(null);
-
-    if (!loggedIn || !effectivePatient || !patientHealthContainerUrl) return;
-
-    let cancelled = false;
-
-    // Full record
-    (async () => {
-      try {
-        if (role === "doctor") {
-          await doctorGateOrThrow(
-            effectivePatient.webId,
-            patientHealthContainerUrl,
-          );
-        }
-
-        const allowCreateIfMissing = role === "patient";
-        const { data, status } = await safeLoadFullRecord(
-          session.fetch,
-          effectivePatient.podBaseUrl,
-          allowCreateIfMissing,
-        );
-
-        if (cancelled) return;
-        setFullRecord(data);
-        setFullRecordStatus(status);
-
-        if (status === 403) {
-          setFullRecordError("You do not have access to this patient's full record.");
-        } else if (status === 404) {
-          setFullRecordError("No full record exists yet for this patient.");
-        }
-      } catch (err: any) {
-        if (cancelled) return;
-
-        const msg = String(err?.message || "");
-
-        if (msg.includes("Legal notice acknowledgement required")) {
-          setFullRecord(null);
-          setFullRecordStatus(403);
-          setFullRecordError("Legal notice must be accepted before access is allowed.");
-          return;
-        }
-
-        if (msg.includes("No active grant")) {
-          setFullRecord(null);
-          setFullRecordStatus(403);
-          setFullRecordError("Access is not currently granted or has been revoked.");
-          return;
-        }
-
-        setFullRecord(null);
-        setFullRecordStatus(null);
-        setFullRecordError("Record not loaded!");
-      }
-    })();
-
-    // Files
-    setFilesLoading(true);
-    (async () => {
-      try {
-        if (role === "doctor") {
-          await doctorGateOrThrow(
-            effectivePatient.webId,
-            patientHealthContainerUrl,
-          );
-        }
-
-        const files = await loadPatientFiles(
-          session.fetch,
-          effectivePatient.podBaseUrl,
-        );
-        if (cancelled) return;
-
-        setPatientFiles(files);
-        setFilesLoading(false);
-      } catch (err: any) {
-        if (cancelled) return;
-        setFilesError("Patient files not loaded!");
-        setFilesLoading(false);
-      }
-    })();
-
-    // Patient: read ACP state to sync toggles
-    if (role === "patient") {
-      readAccessForFullRecord(session.fetch, patientHealthContainerUrl)
-        .then(({ doctorCanReadWrite: docAccess, emergencyCanRead: emgAccess }) => {
-          if (cancelled) return;
-          setDoctorCanReadWrite(docAccess);
-          setEmergencyCanRead(emgAccess);
-        })
-        .catch(() => {
-          if (cancelled) return;
-          // console.error("Error reading ACP:", err);
-        });
-    }
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
+  const patientData = usePatientData({
     loggedIn,
     role,
     webId,
-    selectedPatient,
-    effectivePatientKey,
+    effectivePatient,
     patientHealthContainerUrl,
-    noticeAcceptedTick,
-  ]);
+    noticeAcceptedTick: doctorGate.noticeAcceptedTick,
+    doctorGate: role === "doctor" ? doctorGate.gateOrThrow : undefined,
+  });
 
   // -------------------------
-  // Revocation effect for doctors (poll governance state)
-  // Wipes UI quickly after revoke without needing refresh
+  // File editor UI
   // -------------------------
-  useEffect(() => {
-    if (!loggedIn || role !== "doctor") return;
-    if (!effectivePatient || !patientHealthContainerUrl) return;
+  const [showFileUpload, setShowFileUpload] = useState(false);
+  const [editingFile, setEditingFile] = useState<PatientFile | null>(null);
 
-    let stopped = false;
+  // -------------------------
+  // Doctor revocation polling
+  // -------------------------
+  useDoctorRevocationPolling({
+    loggedIn,
+    role,
+    effectivePatient,
+    patientHealthContainerUrl,
+    onRevoked: () => {
+      doctorGate.clearGateUi();
 
-    const check = async () => {
-      try {
-        const st = await getActiveGrantState(session.fetch, {
-          patientWebId: effectivePatient.webId,
-          doctorWebId: DOCTOR_WEBID,
-          scopeUrl: patientHealthContainerUrl,
-        });
+      patientData.setFullRecord(null);
+      patientData.setFullRecordStatus(403);
+      patientData.setFullRecordError("Access revoked. Data cleared.");
 
-        const revoked = !st || st.status !== "active";
-        if (revoked && !stopped) {
-          setShowLegalNotice(false);
-          setPendingGrant(null);
+      patientData.setPatientFiles([]);
+    },
+  });
 
-          setFullRecord(null);
-          setFullRecordStatus(403);
-          setFullRecordError("Access revoked. Data cleared.");
-
-          setPatientFiles([]);
-        }
-      } catch {
-        // ignore polling errors
-      }
-    };
-
-    const id = window.setInterval(check, 2500);
-    check();
-
-    return () => {
-      stopped = true;
-      window.clearInterval(id);
-    };
-  }, [loggedIn, role, effectivePatientKey, patientHealthContainerUrl]);
-
-  useEffect(() => {
-    if (!loggedIn || role !== "governance") return;
-    refreshAudit();
-  }, [loggedIn, role]);
-  
   // -------------------------
   // Actions
   // -------------------------
-  async function handleLogout() {
-    await logout();
-    window.location.href = "/";
-  }
-
   async function handleBootstrapGovernance() {
     try {
       await bootstrapGovernanceStore(session.fetch);
       alert("Governance store bootstrapped successfully.");
-      await refreshAudit();
+      await audit.refreshAudit();
     } catch (e: any) {
       alert("Bootstrap failed: " + (e?.message || String(e)));
     }
   }
 
   async function handleSaveRecord() {
-    if (!effectivePatient || !fullRecord) return;
+    if (!effectivePatient || !patientData.fullRecord) return;
 
     try {
-      await saveFullRecord(session.fetch, effectivePatient.podBaseUrl, fullRecord);
+      await saveFullRecord(session.fetch, effectivePatient.podBaseUrl, patientData.fullRecord);
       alert("Record saved to pod.");
-      const { data, status } = await safeLoadFullRecord(
-        session.fetch,
-        effectivePatient.podBaseUrl,
-        false,
-      );
-      setFullRecord(data);
-      setFullRecordStatus(status);
-      setFullRecordError(null);
+
+      // Reload record to confirm persisted state
+      const res = await session.fetch(`${effectivePatient.podBaseUrl}health/full-record.json`, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+
+      patientData.setFullRecord((await res.json()) as FullRecord);
+      patientData.setFullRecordStatus(res.status);
+      patientData.setFullRecordError(null);
     } catch (e: any) {
       alert("Failed to save record: " + (e?.message || String(e)));
     }
@@ -516,8 +279,8 @@ const App: React.FC = () => {
         pharmacyWebId: PHARMACY_WEBID,
         nurseWebId: NURSE_WEBID,
 
-        doctorCanReadWrite,
-        emergencyCanRead,
+        doctorCanReadWrite: patientData.doctorCanReadWrite,
+        emergencyCanRead: patientData.emergencyCanRead,
         pharmacyCanRead: false,
         nurseCanReadWrite: false,
 
@@ -525,7 +288,7 @@ const App: React.FC = () => {
       });
 
       // 2) Governance grant state for doctor
-      if (doctorCanReadWrite) {
+      if (patientData.doctorCanReadWrite) {
         await createGrantAndActivate(session.fetch, {
           patientWebId: effectivePatient.webId,
           doctorWebId: DOCTOR_WEBID,
@@ -555,7 +318,8 @@ const App: React.FC = () => {
 
     try {
       if (editingFile) {
-        const updatedFiles = patientFiles.map((f) =>
+        // Keep the existing “edit by overwriting files.json” behaviour
+        const updatedFiles = patientData.patientFiles.map((f) =>
           f.id === editingFile.id
             ? { ...f, ...fileData, updatedAt: new Date().toISOString() }
             : f,
@@ -569,7 +333,7 @@ const App: React.FC = () => {
         });
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 
-        setPatientFiles(updatedFiles);
+        patientData.setPatientFiles(updatedFiles);
         setEditingFile(null);
         setShowFileUpload(false);
         alert("File updated successfully!");
@@ -580,7 +344,7 @@ const App: React.FC = () => {
       }
 
       const files = await loadPatientFiles(session.fetch, effectivePatient.podBaseUrl);
-      setPatientFiles(files);
+      patientData.setPatientFiles(files);
     } catch (e: any) {
       alert("Failed to save file: " + (e?.message || String(e)));
     }
@@ -596,7 +360,7 @@ const App: React.FC = () => {
 
     try {
       await deletePatientFile(session.fetch, effectivePatient.podBaseUrl, fileId);
-      setPatientFiles((files) => files.filter((f) => f.id !== fileId));
+      patientData.setPatientFiles((files) => files.filter((f) => f.id !== fileId));
       alert("File deleted successfully!");
     } catch (e: any) {
       alert("Failed to delete file: " + (e?.message || String(e)));
@@ -609,19 +373,15 @@ const App: React.FC = () => {
   }
 
   // -------------------------
-  // UI render helpers
+  // Render helpers
   // -------------------------
   function renderHeader() {
     return (
       <header className="sticky top-0 z-10 bg-white shadow-md px-6 py-4 mb-6">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold text-gray-800">
-              CSS Healthcare ACP
-            </h1>
-            <p className="text-gray-600 mt-1">
-              Self-hosted Solid pods with Access Control Policies (ACP)
-            </p>
+            <h1 className="text-2xl md:text-3xl font-bold text-gray-800">CSS Healthcare ACP</h1>
+            <p className="text-gray-600 mt-1">Self-hosted Solid pods with Access Control Policies (ACP)</p>
           </div>
 
           <div>
@@ -638,16 +398,12 @@ const App: React.FC = () => {
               <div className="flex flex-col md:flex-row items-start md:items-center gap-3">
                 <div>
                   <div className="text-xs font-medium text-gray-500">WebID</div>
-                  <div className="text-sm text-gray-700 max-w-xs truncate">
-                    {webId}
-                  </div>
+                  <div className="text-sm text-gray-700 max-w-xs truncate">{webId}</div>
                 </div>
 
                 <div>
                   <div className="text-xs font-medium text-gray-500">Role</div>
-                  <div className="text-sm font-semibold text-gray-800 capitalize">
-                    {role}
-                  </div>
+                  <div className="text-sm font-semibold text-gray-800 capitalize">{role}</div>
                 </div>
 
                 {isGovernance && (
@@ -661,7 +417,7 @@ const App: React.FC = () => {
 
                 <button
                   className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-lg transition-colors duration-200"
-                  onClick={handleLogout}
+                  onClick={logout}
                 >
                   Log out
                 </button>
@@ -714,9 +470,7 @@ const App: React.FC = () => {
     if (!loggedIn) {
       return (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
-          <p className="text-yellow-800">
-            Please log in to view or edit health records.
-          </p>
+          <p className="text-yellow-800">Please log in to view or edit health records.</p>
         </div>
       );
     }
@@ -731,25 +485,25 @@ const App: React.FC = () => {
       );
     }
 
-    if (fullRecordStatus === 403) {
+    if (patientData.fullRecordStatus === 403) {
       return (
         <div className="bg-red-50 border border-red-200 rounded-lg p-6 mb-6">
           <h2 className="text-xl font-bold text-gray-800 mb-2">Full record</h2>
           <p className="text-red-700">
-            {fullRecordError || "You do not have access to this patient's full record."}
+            {patientData.fullRecordError || "You do not have access to this patient's full record."}
           </p>
         </div>
       );
     }
 
-    if (fullRecordStatus === 404) {
+    if (patientData.fullRecordStatus === 404) {
       if (role === "patient") {
         const empty = emptyFullRecord();
         return (
           <FullRecordForm
             role={role}
-            fullRecord={fullRecord ?? empty}
-            onChange={setFullRecord}
+            fullRecord={patientData.fullRecord ?? empty}
+            onChange={patientData.setFullRecord}
             onSave={handleSaveRecord}
           />
         );
@@ -758,14 +512,12 @@ const App: React.FC = () => {
       return (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
           <h2 className="text-xl font-bold text-gray-800 mb-2">Full record</h2>
-          <p className="text-blue-700">
-            No full record has been created yet for this patient.
-          </p>
+          <p className="text-blue-700">No full record has been created yet for this patient.</p>
         </div>
       );
     }
 
-    if (!fullRecord) {
+    if (!patientData.fullRecord) {
       return (
         <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-6 mb-6">
           <h2 className="text-xl font-bold text-gray-800 mb-2">Full record</h2>
@@ -777,8 +529,8 @@ const App: React.FC = () => {
     return (
       <FullRecordForm
         role={role}
-        fullRecord={fullRecord}
-        onChange={setFullRecord}
+        fullRecord={patientData.fullRecord}
+        onChange={patientData.setFullRecord}
         onSave={handleSaveRecord}
       />
     );
@@ -802,18 +554,8 @@ const App: React.FC = () => {
                 setEditingFile(null);
               }}
             >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 4v16m8-8H4"
-                />
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
               Add New File
             </button>
@@ -833,9 +575,9 @@ const App: React.FC = () => {
         )}
 
         <PatientFileManager
-          files={patientFiles}
-          loading={filesLoading}
-          error={filesError}
+          files={patientData.patientFiles}
+          loading={patientData.filesLoading}
+          error={patientData.filesError}
           canEdit={canEdit}
           onDelete={handleFileDelete}
           onEdit={handleEditFile}
@@ -850,28 +592,20 @@ const App: React.FC = () => {
     if (role === "governance") return null;
 
     const isOwner =
-      role === "patient" &&
-      effectivePatient &&
-      effectivePatient.webId === webId;
+      role === "patient" && effectivePatient && effectivePatient.webId === webId;
 
     if (!isOwner) {
       return (
         <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 mb-6">
-          <h2 className="text-xl font-bold text-gray-800 mb-3">
-            Access control
-          </h2>
-          <p className="text-gray-600">
-            Only the patient can grant or revoke access to their record.
-          </p>
+          <h2 className="text-xl font-bold text-gray-800 mb-3">Access control</h2>
+          <p className="text-gray-600">Only the patient can grant or revoke access to their record.</p>
         </div>
       );
     }
 
     return (
       <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-6 mb-6">
-        <h2 className="text-xl font-bold text-gray-800 mb-3">
-          Access control (ACP)
-        </h2>
+        <h2 className="text-xl font-bold text-gray-800 mb-3">Access control (ACP)</h2>
         <p className="text-gray-600 mb-4">
           Grant or revoke access to your <strong className="font-semibold">full record</strong> for the doctor
           and the emergency contact. When doctor access is granted, a governance grant is recorded and the doctor
@@ -883,16 +617,12 @@ const App: React.FC = () => {
             <input
               type="checkbox"
               className="h-5 w-5 text-blue-600 rounded focus:ring-blue-500"
-              checked={doctorCanReadWrite}
-              onChange={(e) => setDoctorCanReadWrite(e.target.checked)}
+              checked={patientData.doctorCanReadWrite}
+              onChange={(e) => patientData.setDoctorCanReadWrite(e.target.checked)}
             />
             <div>
-              <div className="font-medium text-gray-800">
-                Doctor - read and write
-              </div>
-              <div className="text-sm text-gray-500">
-                Allows full access to read and modify the record
-              </div>
+              <div className="font-medium text-gray-800">Doctor - read and write</div>
+              <div className="text-sm text-gray-500">Allows full access to read and modify the record</div>
             </div>
           </label>
 
@@ -900,16 +630,12 @@ const App: React.FC = () => {
             <input
               type="checkbox"
               className="h-5 w-5 text-blue-600 rounded focus:ring-blue-500"
-              checked={emergencyCanRead}
-              onChange={(e) => setEmergencyCanRead(e.target.checked)}
+              checked={patientData.emergencyCanRead}
+              onChange={(e) => patientData.setEmergencyCanRead(e.target.checked)}
             />
             <div>
-              <div className="font-medium text-gray-800">
-                Emergency contact - read only
-              </div>
-              <div className="text-sm text-gray-500">
-                Allows viewing the record in emergency situations
-              </div>
+              <div className="font-medium text-gray-800">Emergency contact - read only</div>
+              <div className="text-sm text-gray-500">Allows viewing the record in emergency situations</div>
             </div>
           </label>
         </div>
@@ -939,30 +665,30 @@ const App: React.FC = () => {
 
           <button
             className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200"
-            onClick={refreshAudit}
-            disabled={auditLoading}
+            onClick={audit.refreshAudit}
+            disabled={audit.auditLoading}
           >
-            {auditLoading ? "Refreshing..." : "Refresh"}
+            {audit.auditLoading ? "Refreshing..." : "Refresh"}
           </button>
         </div>
 
-        {auditError && (
+        {audit.auditError && (
           <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
-            {auditError}
+            {audit.auditError}
           </div>
         )}
 
-        {auditLoading && auditEvents.length === 0 && (
+        {audit.auditLoading && audit.auditEvents.length === 0 && (
           <div className="text-gray-600">Loading…</div>
         )}
 
-        {!auditLoading && auditEvents.length === 0 && (
+        {!audit.auditLoading && audit.auditEvents.length === 0 && (
           <div className="text-gray-600">
             No logs found yet. Generate logs by granting, acknowledging, or revoking access.
           </div>
         )}
 
-        {auditEvents.length > 0 && (
+        {audit.auditEvents.length > 0 && (
           <div className="overflow-auto border border-gray-200 rounded-lg">
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50 text-gray-700">
@@ -976,7 +702,7 @@ const App: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {auditEvents.map((ev) => (
+                {audit.auditEvents.map((ev) => (
                   <tr key={ev.eventId} className="border-t">
                     <td className="px-3 py-2 whitespace-nowrap">{fmtTime(ev.at)}</td>
                     <td className="px-3 py-2 font-semibold">{ev.type}</td>
@@ -1017,33 +743,32 @@ const App: React.FC = () => {
       {renderHeader()}
 
       {/* Legal Notice Modal (doctor only) */}
-      {showLegalNotice && (
+      {doctorGate.showLegalNotice && (
         <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-lg p-6 max-w-2xl w-full mx-4">
-            <h2 className="text-xl font-bold text-gray-800 mb-3">
-              Legal Notice
-            </h2>
-            <p className="text-gray-600 mb-3">
-              This notice must be accepted each time access is granted.
-            </p>
+            <h2 className="text-xl font-bold text-gray-800 mb-3">Legal Notice</h2>
+            <p className="text-gray-600 mb-3">This notice must be accepted each time access is granted.</p>
 
             <div className="border border-gray-200 rounded-lg p-3 bg-gray-50 text-sm text-gray-800 whitespace-pre-wrap max-h-64 overflow-auto">
-              {legalNoticeText}
+              {doctorGate.legalNoticeText}
             </div>
 
             <div className="flex gap-3 justify-end mt-5">
               <button
                 className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-lg"
-                onClick={() => {
-                  setShowLegalNotice(false);
-                  setPendingGrant(null);
-                }}
+                onClick={doctorGate.cancelNotice}
               >
                 Cancel
               </button>
               <button
                 className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg"
-                onClick={handleAcceptLegalNotice}
+                onClick={async () => {
+                  try {
+                    await doctorGate.acceptNotice();
+                  } catch (e: any) {
+                    alert("Failed to acknowledge notice: " + (e?.message || String(e)));
+                  }
+                }}
               >
                 I Accept
               </button>
@@ -1061,9 +786,9 @@ const App: React.FC = () => {
             <section className="lg:col-span-2">
               {renderPatientSelector()}
 
-              {fullRecordError && ![403, 404].includes(fullRecordStatus ?? 0) && (
+              {patientData.fullRecordError && ![403, 404].includes(patientData.fullRecordStatus ?? 0) && (
                 <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
-                  {fullRecordError}
+                  {patientData.fullRecordError}
                 </div>
               )}
 
@@ -1075,9 +800,7 @@ const App: React.FC = () => {
               {renderAccessControls()}
 
               <div className="bg-gray-50 border border-gray-200 rounded-lg p-6">
-                <h2 className="text-xl font-bold text-gray-800 mb-3">
-                  Role-specific notes
-                </h2>
+                <h2 className="text-xl font-bold text-gray-800 mb-3">Role-specific notes</h2>
 
                 {role === "doctor" && (
                   <p className="text-gray-600">
@@ -1101,9 +824,7 @@ const App: React.FC = () => {
                 )}
 
                 {role === "pharmacy" && (
-                  <p className="text-gray-600">
-                    As a pharmacy, you can view files that have been shared with you.
-                  </p>
+                  <p className="text-gray-600">As a pharmacy, you can view files that have been shared with you.</p>
                 )}
 
                 {role === "nurse" && (
@@ -1123,156 +844,6 @@ const App: React.FC = () => {
           </div>
         )}
       </main>
-    </div>
-  );
-};
-
-type FullRecordFormProps = {
-  role: Role;
-  fullRecord: FullRecord;
-  onChange: (value: FullRecord) => void;
-  onSave?: () => void;
-};
-
-const FullRecordForm: React.FC<FullRecordFormProps> = ({
-  role,
-  fullRecord,
-  onChange,
-  onSave,
-}) => {
-  const readOnly =
-    role === "emergency" ||
-    role === "pharmacy" ||
-    role === "nurse" ||
-    role === "governance" ||
-    role === "unknown";
-
-  function updateField(field: keyof FullRecord, value: string) {
-    onChange({ ...fullRecord, [field]: value });
-  }
-
-  return (
-    <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-6 mb-6">
-      <h2 className="text-xl font-bold text-gray-800 mb-6">
-        Full medical record
-      </h2>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-        <label className="block">
-          <span className="block text-sm font-medium text-gray-700 mb-1">
-            Patient name
-          </span>
-          <input
-            type="text"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
-            value={fullRecord.patientName}
-            disabled={readOnly}
-            onChange={(e) => updateField("patientName", e.target.value)}
-          />
-        </label>
-
-        <label className="block">
-          <span className="block text-sm font-medium text-gray-700 mb-1">
-            Date of birth
-          </span>
-          <input
-            type="date"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
-            value={fullRecord.dateOfBirth}
-            disabled={readOnly}
-            onChange={(e) => updateField("dateOfBirth", e.target.value)}
-          />
-        </label>
-
-        <label className="block">
-          <span className="block text-sm font-medium text-gray-700 mb-1">
-            Blood type
-          </span>
-          <input
-            type="text"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
-            value={fullRecord.bloodType}
-            disabled={readOnly}
-            onChange={(e) => updateField("bloodType", e.target.value)}
-          />
-        </label>
-
-        <label className="block">
-          <span className="block text-sm font-medium text-gray-700 mb-1">
-            Address
-          </span>
-          <input
-            type="text"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
-            value={fullRecord.address}
-            disabled={readOnly}
-            onChange={(e) => updateField("address", e.target.value)}
-          />
-        </label>
-
-        <label className="block md:col-span-2">
-          <span className="block text-sm font-medium text-gray-700 mb-1">
-            Allergies
-          </span>
-          <textarea
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 h-32 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
-            value={fullRecord.allergies}
-            disabled={readOnly}
-            onChange={(e) => updateField("allergies", e.target.value)}
-          />
-        </label>
-
-        <label className="block md:col-span-2">
-          <span className="block text-sm font-medium text-gray-700 mb-1">
-            Diagnoses
-          </span>
-          <textarea
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 h-32 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
-            value={fullRecord.diagnoses}
-            disabled={readOnly}
-            onChange={(e) => updateField("diagnoses", e.target.value)}
-          />
-        </label>
-
-        <label className="block md:col-span-2">
-          <span className="block text-sm font-medium text-gray-700 mb-1">
-            Medications
-          </span>
-          <textarea
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 h-32 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
-            value={fullRecord.medications}
-            disabled={readOnly}
-            onChange={(e) => updateField("medications", e.target.value)}
-          />
-        </label>
-
-        <label className="block md:col-span-2">
-          <span className="block text-sm font-medium text-gray-700 mb-1">
-            Notes
-          </span>
-          <textarea
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 h-32 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
-            value={fullRecord.notes}
-            disabled={readOnly}
-            onChange={(e) => updateField("notes", e.target.value)}
-          />
-        </label>
-      </div>
-
-      {onSave && !readOnly && (
-        <button
-          className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200"
-          onClick={onSave}
-        >
-          Save record to pod
-        </button>
-      )}
-
-      {readOnly && (
-        <p className="text-gray-500 text-sm italic mt-4">
-          You are viewing this record read only. Only patients and doctors can edit.
-        </p>
-      )}
     </div>
   );
 };
