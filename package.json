@@ -13,13 +13,18 @@
     "@inrupt/solid-client": "^3.0.0",
     "@inrupt/solid-client-authn-browser": "^3.1.1",
     "@inrupt/solid-client-authn-core": "^3.1.1",
+    "@inrupt/solid-client-authn-node": "^3.1.1",
     "@inrupt/vocab-common-rdf": "^1.0.5",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
     "lucide-react": "^0.561.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.58.2",
+    "@types/node": "^25.3.5",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
