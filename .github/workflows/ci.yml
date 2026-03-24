@@ -1,0 +1,55 @@
+name: CI Security Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-analyse:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Stage 1 – Checkout (full history for SonarQube)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Stage 2 – Node.js setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Stage 3 – Install dependencies (lockfile)
+        run: npm ci
+
+      - name: Stage 4 – TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: Stage 5 – ESLint (zero warnings)
+        run: npx eslint src/ --max-warnings 0
+
+      - name: Stage 5a – Playwright end-to-end tests
+        run: npx playwright test
+        env:
+          CI: true
+
+      - name: Stage 6 – Production build
+        run: npm run build
+
+      - name: Stage 7 – npm audit
+        run: npm audit --audit-level=moderate
+
+      - name: Stage 8 – SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      - name: Stage 9 – SonarQube Quality Gate check
+        uses: SonarSource/sonarqube-quality-gate-action@master
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
